@@ -16,15 +16,23 @@ npm run dev
 
 ## Accounts And Friends
 
-The current app is local-first:
+The app supports two modes:
 
-- profiles and password hashes are stored in this browser with IndexedDB
-- attempts, streaks, scores, friends, and imported questions are tied to profiles
-- friend leaderboards support local profiles and manual friend snapshots
+- Cloud mode: Vercel Redis/KV stores profiles, sessions, friend relationships,
+  attempts, streaks, and leaderboard data.
+- Local fallback: if Redis/KV is not configured, profiles and friend snapshots
+  stay in the current browser through IndexedDB.
 
-For real cross-device login and live friend dashboards, connect a backend such
-as Supabase, Firebase, or Cloudflare D1/Auth. GitHub Pages alone cannot securely
-store passwords, shared friend data, or OpenAI API keys.
+For real cross-device login and live friend dashboards on Vercel, add a Vercel
+Redis/KV store to the project and expose:
+
+```bash
+KV_REST_API_URL=...
+KV_REST_API_TOKEN=...
+```
+
+GitHub Pages alone cannot securely store passwords, shared friend data, or
+OpenAI API keys.
 
 ## Optional AI Questions
 
@@ -34,6 +42,8 @@ Question Studio and AI Infinite Practice use a server-side key. Add a local
 ```bash
 OPENAI_API_KEY=your_api_key
 OPENAI_MODEL=gpt-5.5
+KV_REST_API_URL=your_vercel_redis_rest_url
+KV_REST_API_TOKEN=your_vercel_redis_rest_token
 ```
 
 Without `OPENAI_API_KEY`, the rest of the app still works and AI features show a

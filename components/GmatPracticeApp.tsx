@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   accountToFriendSnapshot,
   buildAttempt,
@@ -14,6 +14,12 @@ import {
   updateAbilityMap,
 } from "@/lib/engine";
 import { createAccount, sanitizeEmail, verifyPassword } from "@/lib/auth";
+import type {
+  CloudAuthResponse,
+  CloudFriendsResponse,
+  CloudProgressPayload,
+  CloudSnapshotResponse,
+} from "@/lib/cloud-types";
 import { createStarterQuestions, DIFFICULTIES, QUESTION_TYPES_BY_SECTION } from "@/lib/question-bank";
 import { loadPersistedState, savePersistedState } from "@/lib/storage";
 import {
@@ -171,10 +177,13 @@ export default function GmatPracticeApp() {
   const [ability, setAbility] = useState<AbilityMap>(initialAbility());
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  const [cloudToken, setCloudToken] = useState<string | null>(null);
+  const [cloudFriends, setCloudFriends] = useState<FriendSnapshot[]>([]);
   const [authMode, setAuthMode] = useState<"login" | "signup">("signup");
   const [authForm, setAuthForm] = useState(emptyAuthForm);
   const [authMessage, setAuthMessage] = useState("");
   const [friendForm, setFriendForm] = useState({
+    friendCode: "",
     displayName: "",
     currentScore: "625",
     bestScore: "645",
@@ -217,6 +226,8 @@ export default function GmatPracticeApp() {
           setAttempts(saved.attempts ?? []);
           setAbility({ ...DEFAULT_ABILITY, ...(saved.ability ?? {}) });
           setAccounts(saved.accounts ?? []);
+          setCloudToken(saved.cloudToken ?? null);
+          setActiveProfileId(saved.currentProfileId ?? null);
           setAuthMode((saved.accounts ?? []).length > 0 ? "login" : "signup");
           setToast("Private progress restored from this browser.");
         } else {
@@ -248,11 +259,12 @@ export default function GmatPracticeApp() {
       attempts,
       ability,
       accounts,
-      currentProfileId: null,
+      currentProfileId: activeProfileId,
+      cloudToken,
     };
 
     void savePersistedState(state);
-  }, [ability, attempts, accounts, loaded, questions]);
+  }, [ability, attempts, accounts, activeProfileId, cloudToken, loaded, questions]);
 
   const activeSection = session?.sectionOrder[session.currentSectionIndex] ?? "quant";
   const activeQuestions = session?.questionsBySection[activeSection] ?? [];
@@ -336,9 +348,47 @@ export default function GmatPracticeApp() {
   );
   const analytics = useMemo(() => buildAnalytics(profileAttempts), [profileAttempts]);
   const leaderboard = useMemo(
-    () => buildLeaderboard(accounts, attempts, activeProfileId),
-    [accounts, activeProfileId, attempts],
+    () => (cloudToken ? cloudFriends : buildLeaderboard(accounts, attempts, activeProfileId)),
+    [accounts, activeProfileId, attempts, cloudFriends, cloudToken],
   );
+
+  const refreshCloudSnapshot = useCallback(
+    async (token = cloudToken) => {
+      if (!token) {
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/cloud/snapshot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+        const payload = (await response.json()) as CloudSnapshotResponse;
+        if (!payload.ok) {
+          throw new Error(payload.error);
+        }
+        setCloudFriends(payload.friends);
+        if (payload.ability) {
+          setAbility({ ...DEFAULT_ABILITY, ...payload.ability });
+        }
+      } catch (error) {
+        setToast(error instanceof Error ? error.message : "Cloud snapshot failed.");
+      }
+    },
+    [cloudToken],
+  );
+
+  useEffect(() => {
+    if (!cloudToken || !loaded) {
+      return;
+    }
+
+    const handle = window.setTimeout(() => {
+      void refreshCloudSnapshot(cloudToken);
+    }, 0);
+    return () => window.clearTimeout(handle);
+  }, [cloudToken, loaded, refreshCloudSnapshot]);
 
   async function handleSignup() {
     setAuthMessage("");
@@ -347,6 +397,19 @@ export default function GmatPracticeApp() {
       setAuthMessage("Use a name, email, and a password with at least 6 characters.");
       return;
     }
+
+    const cloud = await requestCloudAuth("signup");
+    if (cloud.ok) {
+      activateCloudAccount(cloud);
+      setAuthForm(emptyAuthForm);
+      setToast(`Cloud profile created for ${cloud.profile.displayName}.`);
+      return;
+    }
+    if (!cloud.localFallback) {
+      setAuthMessage(cloud.error);
+      return;
+    }
+
     if (accounts.some((account) => account.profile.email === email)) {
       setAuthMessage("An account with this email already exists in this browser.");
       return;
@@ -370,6 +433,18 @@ export default function GmatPracticeApp() {
 
   async function handleLogin() {
     setAuthMessage("");
+    const cloud = await requestCloudAuth("login");
+    if (cloud.ok) {
+      activateCloudAccount(cloud);
+      setAuthForm(emptyAuthForm);
+      setToast(`Cloud sync active for ${cloud.profile.displayName}.`);
+      return;
+    }
+    if (!cloud.localFallback) {
+      setAuthMessage(cloud.error);
+      return;
+    }
+
     const account = accounts.find((candidate) => candidate.profile.email === sanitizeEmail(authForm.email));
     if (!account || !(await verifyPassword(account, authForm.password))) {
       setAuthMessage("Email or password is incorrect.");
@@ -392,10 +467,49 @@ export default function GmatPracticeApp() {
 
   function handleLogout() {
     setActiveProfileId(null);
+    setCloudToken(null);
+    setCloudFriends([]);
     setSession(null);
     setView("dashboard");
     setAuthMode("login");
     setToast("Logged out.");
+  }
+
+  async function requestCloudAuth(mode: "signup" | "login"): Promise<CloudAuthResponse> {
+    try {
+      const response = await fetch("/api/cloud/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode, ...authForm }),
+      });
+      return (await response.json()) as CloudAuthResponse;
+    } catch {
+      return {
+        ok: false,
+        error: "Cloud sync is unavailable right now.",
+        localFallback: true,
+      };
+    }
+  }
+
+  function activateCloudAccount(cloud: Extract<CloudAuthResponse, { ok: true }>) {
+    const account: AccountRecord = {
+      profile: cloud.profile,
+      passwordHash: "cloud",
+      salt: "cloud",
+      friends: [],
+    };
+    setAccounts((current) => {
+      const byId = new Map(current.map((candidate) => [candidate.profile.id, candidate]));
+      byId.set(account.profile.id, account);
+      return Array.from(byId.values());
+    });
+    setActiveProfileId(cloud.profile.id);
+    setCloudToken(cloud.token);
+    setCloudFriends(cloud.friends);
+    if (cloud.ability) {
+      setAbility({ ...DEFAULT_ABILITY, ...cloud.ability });
+    }
   }
 
   function startSession(mode: "practice" | "mock", order: SectionId[], aiInfinite = false) {
@@ -700,12 +814,43 @@ export default function GmatPracticeApp() {
       activeAccount?.profile.id,
     );
 
+    const nextAbility = updateAbilityMap(ability, responses);
     setAttempts((current) => [attempt, ...current]);
-    setAbility((current) => updateAbilityMap(current, responses));
+    setAbility(nextAbility);
+    if (cloudToken) {
+      void syncCloudProgress(attempt, nextAbility);
+    }
     setLastAttempt(attempt);
     setSession(null);
     setView("results");
     setToast("Attempt saved locally.");
+  }
+
+  async function syncCloudProgress(attempt: Attempt, nextAbility: AbilityMap) {
+    if (!cloudToken) {
+      return;
+    }
+
+    try {
+      const payload: CloudProgressPayload = {
+        token: cloudToken,
+        attempt,
+        ability: nextAbility,
+      };
+      const response = await fetch("/api/cloud/progress", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const result = (await response.json()) as CloudFriendsResponse;
+      if (!result.ok) {
+        throw new Error(result.error);
+      }
+      setCloudFriends(result.friends);
+      setToast("Attempt saved and synced.");
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Attempt saved locally; cloud sync failed.");
+    }
   }
 
   function reorderSection(section: SectionId, direction: -1 | 1) {
@@ -820,7 +965,33 @@ export default function GmatPracticeApp() {
     return payload.question;
   }
 
-  function addFriendSnapshot() {
+  async function addFriendSnapshot() {
+    if (!activeAccount || !friendForm.displayName.trim()) {
+      if (!cloudToken || !friendForm.friendCode.trim()) {
+        return;
+      }
+    }
+
+    if (cloudToken && friendForm.friendCode.trim()) {
+      try {
+        const response = await fetch("/api/cloud/friends", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: cloudToken, friendCode: friendForm.friendCode }),
+        });
+        const payload = (await response.json()) as CloudFriendsResponse;
+        if (!payload.ok) {
+          throw new Error(payload.error);
+        }
+        setCloudFriends(payload.friends);
+        setFriendForm((current) => ({ ...current, friendCode: "" }));
+        setToast("Friend added by code.");
+      } catch (error) {
+        setToast(error instanceof Error ? error.message : "Could not add friend.");
+      }
+      return;
+    }
+
     if (!activeAccount || !friendForm.displayName.trim()) {
       return;
     }
@@ -846,6 +1017,7 @@ export default function GmatPracticeApp() {
       ),
     );
     setFriendForm({
+      friendCode: "",
       displayName: "",
       currentScore: "625",
       bestScore: "645",
@@ -1020,9 +1192,10 @@ export default function GmatPracticeApp() {
         <FriendsView
           activeAccount={activeAccount}
           leaderboard={leaderboard}
+          cloudActive={Boolean(cloudToken)}
           form={friendForm}
           setForm={setFriendForm}
-          onAddFriend={addFriendSnapshot}
+          onAddFriend={() => void addFriendSnapshot()}
         />
       )}
 
@@ -1660,13 +1833,16 @@ function Dashboard({
 function FriendsView({
   activeAccount,
   leaderboard,
+  cloudActive,
   form,
   setForm,
   onAddFriend,
 }: {
   activeAccount: AccountRecord;
   leaderboard: FriendSnapshot[];
+  cloudActive: boolean;
   form: {
+    friendCode: string;
     displayName: string;
     currentScore: string;
     bestScore: string;
@@ -1674,6 +1850,7 @@ function FriendsView({
     streakDays: string;
   };
   setForm: (form: {
+    friendCode: string;
     displayName: string;
     currentScore: string;
     bestScore: string;
@@ -1747,53 +1924,68 @@ function FriendsView({
           <p className="eyebrow">Add friend snapshot</p>
           <h2>Track friends before cloud sync</h2>
           <p className="muted">
-            Add a friend manually for now. When this is moved to a real backend, these become live
-            friend relationships instead of snapshots.
+            {cloudActive
+              ? "Add a friend's code to create a live two-way leaderboard relationship."
+              : "Cloud sync is not configured yet, so this adds a local snapshot only."}
           </p>
-          <label className="field">
-            Name
-            <input
-              value={form.displayName}
-              onChange={(event) => setForm({ ...form, displayName: event.target.value })}
-              placeholder="Friend name"
-            />
-          </label>
-          <div className="mini-form-grid">
+          {cloudActive && (
             <label className="field">
-              Current
+              Friend code
               <input
-                value={form.currentScore}
-                onChange={(event) => setForm({ ...form, currentScore: event.target.value })}
-                type="number"
+                value={form.friendCode}
+                onChange={(event) => setForm({ ...form, friendCode: event.target.value })}
+                placeholder="AB12CD34"
               />
             </label>
-            <label className="field">
-              Best
-              <input
-                value={form.bestScore}
-                onChange={(event) => setForm({ ...form, bestScore: event.target.value })}
-                type="number"
-              />
-            </label>
-            <label className="field">
-              Sessions
-              <input
-                value={form.sessions}
-                onChange={(event) => setForm({ ...form, sessions: event.target.value })}
-                type="number"
-              />
-            </label>
-            <label className="field">
-              Streak
-              <input
-                value={form.streakDays}
-                onChange={(event) => setForm({ ...form, streakDays: event.target.value })}
-                type="number"
-              />
-            </label>
-          </div>
+          )}
+          {!cloudActive && (
+            <>
+              <label className="field">
+                Name
+                <input
+                  value={form.displayName}
+                  onChange={(event) => setForm({ ...form, displayName: event.target.value })}
+                  placeholder="Friend name"
+                />
+              </label>
+              <div className="mini-form-grid">
+                <label className="field">
+                  Current
+                  <input
+                    value={form.currentScore}
+                    onChange={(event) => setForm({ ...form, currentScore: event.target.value })}
+                    type="number"
+                  />
+                </label>
+                <label className="field">
+                  Best
+                  <input
+                    value={form.bestScore}
+                    onChange={(event) => setForm({ ...form, bestScore: event.target.value })}
+                    type="number"
+                  />
+                </label>
+                <label className="field">
+                  Sessions
+                  <input
+                    value={form.sessions}
+                    onChange={(event) => setForm({ ...form, sessions: event.target.value })}
+                    type="number"
+                  />
+                </label>
+                <label className="field">
+                  Streak
+                  <input
+                    value={form.streakDays}
+                    onChange={(event) => setForm({ ...form, streakDays: event.target.value })}
+                    type="number"
+                  />
+                </label>
+              </div>
+            </>
+          )}
           <button className="primary-action" type="button" onClick={onAddFriend}>
-            Add friend
+            {cloudActive ? "Add by friend code" : "Add friend snapshot"}
           </button>
         </div>
       </div>

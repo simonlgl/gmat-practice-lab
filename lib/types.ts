@@ -145,6 +145,7 @@ export type AppPersistedState = {
   ability: AbilityMap;
   accounts: AccountRecord[];
   currentProfileId: string | null;
+  cloudToken?: string | null;
 };
 
 export const SECTION_BY_ID = Object.fromEntries(
