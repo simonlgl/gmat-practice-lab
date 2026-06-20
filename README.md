@@ -60,3 +60,6 @@ npm run dev
 npm run build
 npm run lint
 ```
+
+The default scripts target Vercel/standard Next.js hosting. The original
+Cloudflare Sites build is still available through `npm run build:sites`.
