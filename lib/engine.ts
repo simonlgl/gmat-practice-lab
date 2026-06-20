@@ -193,15 +193,28 @@ export function computeStreakDays(attempts: Attempt[]) {
   return streak;
 }
 
+export function isAttemptThisWeek(attempt: Attempt, now = new Date()) {
+  const completed = new Date(attempt.completedAt);
+  const start = new Date(now);
+  const day = start.getDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() + diffToMonday);
+  return completed >= start && completed <= now;
+}
+
 export function profileStats(profileId: string, attempts: Attempt[]) {
   const profileAttempts = attempts.filter((attempt) => attempt.profileId === profileId);
   const latest = profileAttempts[0];
+  const thisWeek = profileAttempts.filter((attempt) => isAttemptThisWeek(attempt));
   const bestScore = profileAttempts.length
     ? Math.max(...profileAttempts.map((attempt) => attempt.estimatedTotalScore))
     : 0;
 
   return {
     sessions: profileAttempts.length,
+    sessionsThisWeek: thisWeek.length,
+    questionsThisWeek: thisWeek.reduce((sum, attempt) => sum + attempt.totalQuestions, 0),
     streakDays: computeStreakDays(profileAttempts),
     bestScore,
     currentScore: latest?.estimatedTotalScore ?? 0,
@@ -209,12 +222,27 @@ export function profileStats(profileId: string, attempts: Attempt[]) {
   };
 }
 
-export function accountToFriendSnapshot(account: AccountRecord, attempts: Attempt[]): FriendSnapshot {
+export function accountToFriendSnapshot(
+  account: AccountRecord,
+  attempts: Attempt[],
+  viewerProfileId?: string,
+): FriendSnapshot {
+  const stats = profileStats(account.profile.id, attempts);
+  const scoreVisible =
+    account.profile.showScoreToFriends !== false || account.profile.id === viewerProfileId;
+
   return {
     id: account.profile.id,
     displayName: account.profile.displayName,
     friendCode: account.profile.friendCode,
     avatarColor: account.profile.avatarColor,
-    ...profileStats(account.profile.id, attempts),
+    sessions: stats.sessions,
+    sessionsThisWeek: stats.sessionsThisWeek,
+    questionsThisWeek: stats.questionsThisWeek,
+    streakDays: stats.streakDays,
+    bestScore: scoreVisible ? stats.bestScore : 0,
+    currentScore: scoreVisible ? stats.currentScore : 0,
+    scoreVisible,
+    lastActiveAt: stats.lastActiveAt,
   };
 }

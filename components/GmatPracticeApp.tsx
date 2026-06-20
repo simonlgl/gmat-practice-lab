@@ -4,19 +4,22 @@ import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } fro
 import {
   accountToFriendSnapshot,
   buildAttempt,
+  computeStreakDays,
   createId,
   durationForMode,
   formatClock,
   initialAbility,
+  isAttemptThisWeek,
   mergeQuestions,
   questionCountForMode,
   selectSectionQuestions,
   updateAbilityMap,
 } from "@/lib/engine";
-import { createAccount, sanitizeEmail, verifyPassword } from "@/lib/auth";
+import { createAccount, sanitizeEmail, updateLocalPassword, verifyPassword, verifyRecoveryCode } from "@/lib/auth";
 import type {
   CloudAuthResponse,
   CloudFriendsResponse,
+  CloudProfileResponse,
   CloudProgressPayload,
   CloudSnapshotResponse,
 } from "@/lib/cloud-types";
@@ -47,6 +50,7 @@ type View =
   | "studio"
   | "library"
   | "results";
+type AuthMode = "login" | "signup" | "reset";
 type SessionStatus = "question" | "feedback" | "review" | "break";
 
 type ActiveSession = {
@@ -91,6 +95,7 @@ const emptyAuthForm = {
   displayName: "",
   email: "",
   password: "",
+  recoveryCode: "",
   targetScore: 655,
 };
 
@@ -170,6 +175,48 @@ function currentMillis() {
   return new Date().getTime();
 }
 
+function profileWithDefaults(profile: AccountRecord["profile"]) {
+  return {
+    ...profile,
+    dailyQuestionGoal: profile.dailyQuestionGoal ?? 20,
+    weeklySessionGoal: profile.weeklySessionGoal ?? 5,
+    showScoreToFriends: profile.showScoreToFriends ?? true,
+    remindersEnabled: profile.remindersEnabled ?? false,
+    reminderHour: profile.reminderHour ?? 18,
+  };
+}
+
+function normalizeFriendSnapshot(friend: FriendSnapshot): FriendSnapshot {
+  return {
+    ...friend,
+    sessionsThisWeek: friend.sessionsThisWeek ?? 0,
+    questionsThisWeek: friend.questionsThisWeek ?? 0,
+    scoreVisible: friend.scoreVisible ?? true,
+  };
+}
+
+function normalizeAccount(account: AccountRecord): AccountRecord {
+  return {
+    ...account,
+    profile: profileWithDefaults(account.profile),
+    friends: (account.friends ?? []).map(normalizeFriendSnapshot),
+  };
+}
+
+function clampGoal(value: number, fallback: number) {
+  return Math.max(1, Math.round(Number(value) || fallback));
+}
+
+function buildReminderDelay(hour: number) {
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(hour, 0, 0, 0);
+  if (next <= now) {
+    next.setDate(next.getDate() + 1);
+  }
+  return next.getTime() - now.getTime();
+}
+
 export default function GmatPracticeApp() {
   const [view, setView] = useState<View>("dashboard");
   const [questions, setQuestions] = useState<Question[]>(starterQuestions);
@@ -179,9 +226,11 @@ export default function GmatPracticeApp() {
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [cloudToken, setCloudToken] = useState<string | null>(null);
   const [cloudFriends, setCloudFriends] = useState<FriendSnapshot[]>([]);
-  const [authMode, setAuthMode] = useState<"login" | "signup">("signup");
+  const [authMode, setAuthMode] = useState<AuthMode>("signup");
   const [authForm, setAuthForm] = useState(emptyAuthForm);
   const [authMessage, setAuthMessage] = useState("");
+  const [accountNotice, setAccountNotice] = useState("");
+  const [settingsMessage, setSettingsMessage] = useState("");
   const [friendForm, setFriendForm] = useState({
     friendCode: "",
     displayName: "",
@@ -225,7 +274,7 @@ export default function GmatPracticeApp() {
           setQuestions(mergeQuestions(starterQuestions, saved.questions ?? []));
           setAttempts(saved.attempts ?? []);
           setAbility({ ...DEFAULT_ABILITY, ...(saved.ability ?? {}) });
-          setAccounts(saved.accounts ?? []);
+          setAccounts((saved.accounts ?? []).map(normalizeAccount));
           setCloudToken(saved.cloudToken ?? null);
           setActiveProfileId(saved.currentProfileId ?? null);
           setAuthMode((saved.accounts ?? []).length > 0 ? "login" : "signup");
@@ -254,7 +303,7 @@ export default function GmatPracticeApp() {
     }
 
     const state: AppPersistedState = {
-      version: 2,
+      version: 3,
       questions,
       attempts,
       ability,
@@ -351,6 +400,8 @@ export default function GmatPracticeApp() {
     () => (cloudToken ? cloudFriends : buildLeaderboard(accounts, attempts, activeProfileId)),
     [accounts, activeProfileId, attempts, cloudFriends, cloudToken],
   );
+  const reminderEnabled = Boolean(activeAccount?.profile.remindersEnabled);
+  const reminderHour = activeAccount?.profile.reminderHour ?? 18;
 
   const refreshCloudSnapshot = useCallback(
     async (token = cloudToken) => {
@@ -368,7 +419,14 @@ export default function GmatPracticeApp() {
         if (!payload.ok) {
           throw new Error(payload.error);
         }
-        setCloudFriends(payload.friends);
+        setCloudFriends(payload.friends.map(normalizeFriendSnapshot));
+        setAccounts((current) =>
+          current.map((account) =>
+            account.profile.id === payload.profile.id
+              ? normalizeAccount({ ...account, profile: payload.profile })
+              : account,
+          ),
+        );
         if (payload.ability) {
           setAbility({ ...DEFAULT_ABILITY, ...payload.ability });
         }
@@ -390,6 +448,44 @@ export default function GmatPracticeApp() {
     return () => window.clearTimeout(handle);
   }, [cloudToken, loaded, refreshCloudSnapshot]);
 
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+      return;
+    }
+
+    void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (
+      !reminderEnabled ||
+      typeof Notification === "undefined" ||
+      Notification.permission !== "granted"
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let timeoutId = 0;
+    const schedule = () => {
+      timeoutId = window.setTimeout(() => {
+        if (!cancelled) {
+          new Notification("GMAT Practice Lab", {
+            body: "Your daily practice goal is waiting.",
+            icon: "/favicon.svg",
+          });
+          schedule();
+        }
+      }, buildReminderDelay(reminderHour));
+    };
+
+    schedule();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [reminderEnabled, reminderHour]);
+
   async function handleSignup() {
     setAuthMessage("");
     const email = sanitizeEmail(authForm.email);
@@ -402,6 +498,9 @@ export default function GmatPracticeApp() {
     if (cloud.ok) {
       activateCloudAccount(cloud);
       setAuthForm(emptyAuthForm);
+      if (cloud.recoveryCode) {
+        setAccountNotice(`Recovery code: ${cloud.recoveryCode}. Save it somewhere private.`);
+      }
       setToast(`Cloud profile created for ${cloud.profile.displayName}.`);
       return;
     }
@@ -415,19 +514,21 @@ export default function GmatPracticeApp() {
       return;
     }
 
-    const account = await createAccount(
+    const created = await createAccount(
       authForm.displayName,
       email,
       authForm.password,
       Number(authForm.targetScore) || 655,
     );
+    const { recoveryCode, ...account } = created;
 
-    setAccounts((current) => [...current, account]);
+    setAccounts((current) => [...current, normalizeAccount(account)]);
     setAttempts((current) =>
       current.map((attempt) => (attempt.profileId ? attempt : { ...attempt, profileId: account.profile.id })),
     );
     setActiveProfileId(account.profile.id);
     setAuthForm(emptyAuthForm);
+    setAccountNotice(`Recovery code: ${recoveryCode}. Save it somewhere private.`);
     setToast(`Welcome, ${account.profile.displayName}.`);
   }
 
@@ -457,12 +558,54 @@ export default function GmatPracticeApp() {
     };
     setAccounts((current) =>
       current.map((candidate) =>
-        candidate.profile.id === account.profile.id ? updatedAccount : candidate,
+        candidate.profile.id === account.profile.id ? normalizeAccount(updatedAccount) : candidate,
       ),
     );
     setActiveProfileId(account.profile.id);
     setAuthForm(emptyAuthForm);
     setToast(`Logged in as ${account.profile.displayName}.`);
+  }
+
+  async function handleResetPassword() {
+    setAuthMessage("");
+    const email = sanitizeEmail(authForm.email);
+    if (!email || !authForm.recoveryCode.trim() || authForm.password.length < 6) {
+      setAuthMessage("Use your email, recovery code, and a new password with at least 6 characters.");
+      return;
+    }
+
+    const cloud = await requestCloudAuth("reset");
+    if (cloud.ok) {
+      activateCloudAccount(cloud);
+      setAuthForm(emptyAuthForm);
+      if (cloud.recoveryCode) {
+        setAccountNotice(`New recovery code: ${cloud.recoveryCode}. Save it somewhere private.`);
+      }
+      setToast("Password reset. Cloud sync is active.");
+      return;
+    }
+    if (!cloud.localFallback) {
+      setAuthMessage(cloud.error);
+      return;
+    }
+
+    const account = accounts.find((candidate) => candidate.profile.email === email);
+    if (!account || !(await verifyRecoveryCode(account, authForm.recoveryCode))) {
+      setAuthMessage("Email or recovery code is incorrect.");
+      return;
+    }
+
+    const updated = await updateLocalPassword(account, authForm.password);
+    const { recoveryCode, ...nextAccount } = updated;
+    setAccounts((current) =>
+      current.map((candidate) =>
+        candidate.profile.id === account.profile.id ? normalizeAccount(nextAccount) : candidate,
+      ),
+    );
+    setActiveProfileId(account.profile.id);
+    setAuthForm(emptyAuthForm);
+    setAccountNotice(`New recovery code: ${recoveryCode}. Save it somewhere private.`);
+    setToast("Password reset.");
   }
 
   function handleLogout() {
@@ -472,10 +615,87 @@ export default function GmatPracticeApp() {
     setSession(null);
     setView("dashboard");
     setAuthMode("login");
+    setAccountNotice("");
+    setSettingsMessage("");
     setToast("Logged out.");
   }
 
-  async function requestCloudAuth(mode: "signup" | "login"): Promise<CloudAuthResponse> {
+  async function updateProfileSettings(updates: Partial<AccountRecord["profile"]>) {
+    if (!activeAccount) {
+      return;
+    }
+
+    const nextProfile = profileWithDefaults({
+      ...activeAccount.profile,
+      ...updates,
+      dailyQuestionGoal: clampGoal(
+        Number(updates.dailyQuestionGoal ?? activeAccount.profile.dailyQuestionGoal),
+        20,
+      ),
+      weeklySessionGoal: clampGoal(
+        Number(updates.weeklySessionGoal ?? activeAccount.profile.weeklySessionGoal),
+        5,
+      ),
+      targetScore: Math.max(
+        205,
+        Math.min(805, Math.round(Number(updates.targetScore ?? activeAccount.profile.targetScore) || 655)),
+      ),
+      reminderHour: Math.min(
+        23,
+        Math.max(0, Math.round(Number(updates.reminderHour ?? activeAccount.profile.reminderHour) || 18)),
+      ),
+    });
+
+    setAccounts((current) =>
+      current.map((account) =>
+        account.profile.id === activeAccount.profile.id
+          ? normalizeAccount({ ...account, profile: nextProfile })
+          : account,
+      ),
+    );
+    setSettingsMessage("Profile settings saved.");
+
+    if (!cloudToken) {
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/cloud/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: cloudToken, ...nextProfile }),
+      });
+      const payload = (await response.json()) as CloudProfileResponse;
+      if (!payload.ok) {
+        throw new Error(payload.error);
+      }
+      setAccounts((current) =>
+        current.map((account) =>
+          account.profile.id === payload.profile.id
+            ? normalizeAccount({ ...account, profile: payload.profile })
+            : account,
+        ),
+      );
+      setCloudFriends(payload.friends.map(normalizeFriendSnapshot));
+      setSettingsMessage("Profile settings synced.");
+    } catch (error) {
+      setSettingsMessage(error instanceof Error ? error.message : "Saved locally; cloud sync failed.");
+    }
+  }
+
+  async function toggleReminders(enabled: boolean) {
+    if (enabled && typeof Notification !== "undefined" && Notification.permission === "default") {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setSettingsMessage("Browser notifications were not enabled.");
+        return;
+      }
+    }
+
+    await updateProfileSettings({ remindersEnabled: enabled });
+  }
+
+  async function requestCloudAuth(mode: AuthMode): Promise<CloudAuthResponse> {
     try {
       const response = await fetch("/api/cloud/auth", {
         method: "POST",
@@ -494,19 +714,19 @@ export default function GmatPracticeApp() {
 
   function activateCloudAccount(cloud: Extract<CloudAuthResponse, { ok: true }>) {
     const account: AccountRecord = {
-      profile: cloud.profile,
+      profile: profileWithDefaults(cloud.profile),
       passwordHash: "cloud",
       salt: "cloud",
       friends: [],
     };
     setAccounts((current) => {
       const byId = new Map(current.map((candidate) => [candidate.profile.id, candidate]));
-      byId.set(account.profile.id, account);
+      byId.set(account.profile.id, normalizeAccount(account));
       return Array.from(byId.values());
     });
     setActiveProfileId(cloud.profile.id);
     setCloudToken(cloud.token);
-    setCloudFriends(cloud.friends);
+    setCloudFriends(cloud.friends.map(normalizeFriendSnapshot));
     if (cloud.ability) {
       setAbility({ ...DEFAULT_ABILITY, ...cloud.ability });
     }
@@ -846,7 +1066,7 @@ export default function GmatPracticeApp() {
       if (!result.ok) {
         throw new Error(result.error);
       }
-      setCloudFriends(result.friends);
+      setCloudFriends(result.friends.map(normalizeFriendSnapshot));
       setToast("Attempt saved and synced.");
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Attempt saved locally; cloud sync failed.");
@@ -866,7 +1086,7 @@ export default function GmatPracticeApp() {
 
   function exportData() {
     const payload: AppPersistedState = {
-      version: 2,
+      version: 3,
       questions,
       attempts,
       ability,
@@ -909,7 +1129,7 @@ export default function GmatPracticeApp() {
         setAccounts((current) => {
           const byEmail = new Map(current.map((account) => [account.profile.email, account]));
           for (const account of parsed.accounts ?? []) {
-            byEmail.set(account.profile.email, account);
+            byEmail.set(account.profile.email, normalizeAccount(account));
           }
           return Array.from(byEmail.values());
         });
@@ -983,7 +1203,7 @@ export default function GmatPracticeApp() {
         if (!payload.ok) {
           throw new Error(payload.error);
         }
-        setCloudFriends(payload.friends);
+        setCloudFriends(payload.friends.map(normalizeFriendSnapshot));
         setFriendForm((current) => ({ ...current, friendCode: "" }));
         setToast("Friend added by code.");
       } catch (error) {
@@ -1003,9 +1223,12 @@ export default function GmatPracticeApp() {
       friendCode: createId("code").slice(-8).toUpperCase(),
       avatarColor: "#bd7b22",
       sessions: Math.max(0, Number(friendForm.sessions) || 0),
+      sessionsThisWeek: Math.max(0, Number(friendForm.sessions) || 0),
+      questionsThisWeek: 0,
       streakDays: Math.max(0, Number(friendForm.streakDays) || 0),
       currentScore: Math.max(0, Number(friendForm.currentScore) || 0),
       bestScore: Math.max(0, Number(friendForm.bestScore) || 0),
+      scoreVisible: true,
       lastActiveAt: now,
     };
 
@@ -1099,6 +1322,7 @@ export default function GmatPracticeApp() {
         message={authMessage}
         onLogin={() => void handleLogin()}
         onSignup={() => void handleSignup()}
+        onReset={() => void handleResetPassword()}
       />
     );
   }
@@ -1175,12 +1399,17 @@ export default function GmatPracticeApp() {
 
       {view === "dashboard" && (
           <Dashboard
+          activeAccount={activeAccount}
           attempts={profileAttempts}
           questions={questions}
           ability={ability}
           analytics={analytics}
+          accountNotice={accountNotice}
+          settingsMessage={settingsMessage}
           onStartPractice={() => startSession("practice", [practiceSection])}
           onStartMock={() => startSession("mock", mockOrder)}
+          onUpdateProfile={(updates) => void updateProfileSettings(updates)}
+          onToggleReminders={(enabled) => void toggleReminders(enabled)}
           practiceSection={practiceSection}
           setPracticeSection={setPracticeSection}
           mockOrder={mockOrder}
@@ -1324,31 +1553,34 @@ function AuthGate({
   message,
   onLogin,
   onSignup,
+  onReset,
 }: {
   accounts: AccountRecord[];
-  mode: "login" | "signup";
-  setMode: (mode: "login" | "signup") => void;
+  mode: AuthMode;
+  setMode: (mode: AuthMode) => void;
   form: typeof emptyAuthForm;
   setForm: (form: typeof emptyAuthForm) => void;
   message: string;
   onLogin: () => void;
   onSignup: () => void;
+  onReset: () => void;
 }) {
   const isSignup = mode === "signup";
+  const isReset = mode === "reset";
 
   return (
     <main className="app-shell auth-shell">
       <section className="auth-card">
         <div>
           <p className="eyebrow">Private GMAT practice lab</p>
-          <h1>{isSignup ? "Create your GMAT profile" : "Welcome back"}</h1>
+          <h1>{isSignup ? "Create your GMAT profile" : isReset ? "Reset password" : "Welcome back"}</h1>
           <p className="muted">
-            Login is local-first for now. Your profile, streaks, scores, and friends stay in this
-            browser until a cloud backend is connected.
+            Cloud sync keeps profiles, streaks, scores, and friends available across browsers.
+            Your recovery code can reset your password without another paid service.
           </p>
         </div>
 
-        <div className="auth-switch">
+        <div className="auth-switch triple">
           <button
             type="button"
             className={isSignup ? "active" : ""}
@@ -1358,11 +1590,17 @@ function AuthGate({
           </button>
           <button
             type="button"
-            className={!isSignup ? "active" : ""}
+            className={mode === "login" ? "active" : ""}
             onClick={() => setMode("login")}
-            disabled={accounts.length === 0}
           >
             Login
+          </button>
+          <button
+            type="button"
+            className={isReset ? "active" : ""}
+            onClick={() => setMode("reset")}
+          >
+            Reset
           </button>
         </div>
 
@@ -1388,7 +1626,7 @@ function AuthGate({
         </label>
 
         <label className="field">
-          Password
+          {isReset ? "New password" : "Password"}
           <input
             value={form.password}
             onChange={(event) => setForm({ ...form, password: event.target.value })}
@@ -1396,6 +1634,17 @@ function AuthGate({
             type="password"
           />
         </label>
+
+        {isReset && (
+          <label className="field">
+            Recovery code
+            <input
+              value={form.recoveryCode}
+              onChange={(event) => setForm({ ...form, recoveryCode: event.target.value })}
+              placeholder="ABCD-EFGH-2345"
+            />
+          </label>
+        )}
 
         {isSignup && (
           <label className="field">
@@ -1413,8 +1662,8 @@ function AuthGate({
 
         {message && <p className="notice">{message}</p>}
 
-        <button className="primary-action" type="button" onClick={isSignup ? onSignup : onLogin}>
-          {isSignup ? "Create profile" : "Login"}
+        <button className="primary-action" type="button" onClick={isSignup ? onSignup : isReset ? onReset : onLogin}>
+          {isSignup ? "Create profile" : isReset ? "Reset password" : "Login"}
         </button>
 
         {accounts.length > 0 && (
@@ -1712,29 +1961,48 @@ function ExamHeader({
 }
 
 function Dashboard({
+  activeAccount,
   attempts,
   questions,
   ability,
   analytics,
+  accountNotice,
+  settingsMessage,
   onStartPractice,
   onStartMock,
+  onUpdateProfile,
+  onToggleReminders,
   practiceSection,
   setPracticeSection,
   mockOrder,
   reorderSection,
 }: {
+  activeAccount: AccountRecord;
   attempts: Attempt[];
   questions: Question[];
   ability: AbilityMap;
   analytics: ReturnType<typeof buildAnalytics>;
+  accountNotice: string;
+  settingsMessage: string;
   onStartPractice: () => void;
   onStartMock: () => void;
+  onUpdateProfile: (updates: Partial<AccountRecord["profile"]>) => void;
+  onToggleReminders: (enabled: boolean) => void;
   practiceSection: SectionId;
   setPracticeSection: (section: SectionId) => void;
   mockOrder: SectionId[];
   reorderSection: (section: SectionId, direction: -1 | 1) => void;
 }) {
   const latest = attempts[0];
+  const profile = profileWithDefaults(activeAccount.profile);
+  const dailyGoal = profile.dailyQuestionGoal ?? 20;
+  const weeklyGoal = profile.weeklySessionGoal ?? 5;
+  const dailyProgress = Math.min((analytics.todayQuestions / dailyGoal) * 100, 100);
+  const weeklyProgress = Math.min((analytics.weeklySessions / weeklyGoal) * 100, 100);
+  const lowestSection = SECTIONS.reduce((lowest, section) =>
+    ability[section.id] < ability[lowest.id] ? section : lowest,
+  );
+  const recommendedTopic = analytics.weakestTopic || `${lowestSection.shortLabel} mixed practice`;
 
   return (
     <section className="workspace">
@@ -1743,7 +2011,7 @@ function Dashboard({
           <p className="eyebrow">Next session</p>
           <h2>{latest ? `Last score estimate ${latest.estimatedTotalScore}` : "Ready for your first run"}</h2>
           <p className="muted">
-            Local-only progress, adaptive selection, and review limits are active.
+            Adaptive selection, cloud sync, review limits, and streak tracking are active.
           </p>
           <div className="quick-actions">
             <button className="primary-action" type="button" onClick={onStartPractice}>
@@ -1786,6 +2054,39 @@ function Dashboard({
         </div>
       </div>
 
+      {accountNotice && <p className="notice strong-notice">{accountNotice}</p>}
+
+      <div className="goal-grid">
+        <div className="panel compact">
+          <p className="eyebrow">Today</p>
+          <h2>{analytics.todayQuestions}/{dailyGoal} questions</h2>
+          <div className="mini-track goal-track">
+            <i style={{ width: `${dailyProgress}%` }} />
+          </div>
+          <p className="muted">{analytics.todayMinutes} minutes trained today</p>
+        </div>
+
+        <div className="panel compact">
+          <p className="eyebrow">This week</p>
+          <h2>{analytics.weeklySessions}/{weeklyGoal} sessions</h2>
+          <div className="mini-track goal-track">
+            <i style={{ width: `${weeklyProgress}%` }} />
+          </div>
+          <p className="muted">{analytics.weeklyQuestions} questions this week</p>
+        </div>
+
+        <div className="panel compact">
+          <p className="eyebrow">Recommended next</p>
+          <h2>{recommendedTopic}</h2>
+          <p className="muted">
+            Focus section: {lowestSection.shortLabel}. Current streak: {analytics.streakDays} days.
+          </p>
+          <button className="secondary-action small" type="button" onClick={() => setPracticeSection(lowestSection.id)}>
+            Select section
+          </button>
+        </div>
+      </div>
+
       <div className="workspace two-column">
         <div className="panel">
           <p className="eyebrow">Practice setup</p>
@@ -1804,29 +2105,129 @@ function Dashboard({
           </div>
         </div>
 
-        <div className="panel">
-          <p className="eyebrow">Mock order</p>
-          <div className="order-list">
-            {mockOrder.map((section, index) => (
-              <div className="order-row" key={section}>
-                <span>{index + 1}</span>
-                <strong>{sectionName(section)}</strong>
-                <div>
-                  <button type="button" title="Move up" onClick={() => reorderSection(section, -1)}>
-                    ↑
-                  </button>
-                  <button type="button" title="Move down" onClick={() => reorderSection(section, 1)}>
-                    ↓
-                  </button>
-                </div>
+        <ProfileSettingsPanel
+          profile={profile}
+          message={settingsMessage}
+          onUpdate={onUpdateProfile}
+          onToggleReminders={onToggleReminders}
+        />
+      </div>
+
+      <div className="panel">
+        <p className="eyebrow">Mock order</p>
+        <div className="order-list">
+          {mockOrder.map((section, index) => (
+            <div className="order-row" key={section}>
+              <span>{index + 1}</span>
+              <strong>{sectionName(section)}</strong>
+              <div>
+                <button type="button" title="Move up" onClick={() => reorderSection(section, -1)}>
+                  ↑
+                </button>
+                <button type="button" title="Move down" onClick={() => reorderSection(section, 1)}>
+                  ↓
+                </button>
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
       </div>
 
       <AnalyticsSnapshot analytics={analytics} />
     </section>
+  );
+}
+
+function ProfileSettingsPanel({
+  profile,
+  message,
+  onUpdate,
+  onToggleReminders,
+}: {
+  profile: AccountRecord["profile"];
+  message: string;
+  onUpdate: (updates: Partial<AccountRecord["profile"]>) => void;
+  onToggleReminders: (enabled: boolean) => void;
+}) {
+  const [draft, setDraft] = useState(profileWithDefaults(profile));
+
+  return (
+    <div className="panel">
+      <p className="eyebrow">Profile settings</p>
+      <div className="mini-form-grid">
+        <label className="field">
+          Display name
+          <input
+            value={draft.displayName}
+            onChange={(event) => setDraft({ ...draft, displayName: event.target.value })}
+          />
+        </label>
+        <label className="field">
+          Target score
+          <input
+            value={draft.targetScore}
+            type="number"
+            min="205"
+            max="805"
+            step="10"
+            onChange={(event) => setDraft({ ...draft, targetScore: Number(event.target.value) })}
+          />
+        </label>
+        <label className="field">
+          Daily questions
+          <input
+            value={draft.dailyQuestionGoal ?? 20}
+            type="number"
+            min="1"
+            onChange={(event) => setDraft({ ...draft, dailyQuestionGoal: Number(event.target.value) })}
+          />
+        </label>
+        <label className="field">
+          Weekly sessions
+          <input
+            value={draft.weeklySessionGoal ?? 5}
+            type="number"
+            min="1"
+            onChange={(event) => setDraft({ ...draft, weeklySessionGoal: Number(event.target.value) })}
+          />
+        </label>
+      </div>
+      <label className="toggle-row">
+        <input
+          type="checkbox"
+          checked={draft.showScoreToFriends !== false}
+          onChange={(event) => setDraft({ ...draft, showScoreToFriends: event.target.checked })}
+        />
+        <span>Show my score to friends</span>
+      </label>
+      <div className="mini-form-grid">
+        <label className="toggle-row fieldless">
+          <input
+            type="checkbox"
+            checked={Boolean(draft.remindersEnabled)}
+            onChange={(event) => {
+              setDraft({ ...draft, remindersEnabled: event.target.checked });
+              onToggleReminders(event.target.checked);
+            }}
+          />
+          <span>Daily browser reminder</span>
+        </label>
+        <label className="field compact-field">
+          Reminder hour
+          <input
+            value={draft.reminderHour ?? 18}
+            type="number"
+            min="0"
+            max="23"
+            onChange={(event) => setDraft({ ...draft, reminderHour: Number(event.target.value) })}
+          />
+        </label>
+      </div>
+      <button className="primary-action" type="button" onClick={() => onUpdate(draft)}>
+        Save settings
+      </button>
+      {message && <p className="notice">{message}</p>}
+    </div>
   );
 }
 
@@ -1860,6 +2261,7 @@ function FriendsView({
   onAddFriend: () => void;
 }) {
   const sessionsLeader = [...leaderboard].sort((a, b) => b.sessions - a.sessions)[0];
+  const weeklyLeader = [...leaderboard].sort((a, b) => b.sessionsThisWeek - a.sessionsThisWeek)[0];
   const scoreLeader = [...leaderboard].sort((a, b) => b.currentScore - a.currentScore)[0];
 
   return (
@@ -1869,9 +2271,21 @@ function FriendsView({
           <p className="eyebrow">Friend dashboard</p>
           <h2>Train streaks, score races, and friendly pressure.</h2>
           <p className="muted">
-            Your friend code is <strong>{activeAccount.profile.friendCode}</strong>. The current
-            version stores friend snapshots locally; the same UI can be backed by cloud sync later.
+            Your friend code is <strong>{activeAccount.profile.friendCode}</strong>. Cloud friends
+            update automatically after saved sessions.
           </p>
+          <button
+            className="secondary-action small"
+            type="button"
+            onClick={() => copyToClipboard(activeAccount.profile.friendCode)}
+          >
+            Copy code
+          </button>
+        </div>
+        <div className="panel compact">
+          <p className="eyebrow">Weekly challenge</p>
+          <div className="big-number">{weeklyLeader?.sessionsThisWeek ?? 0}</div>
+          <p className="muted">{weeklyLeader?.displayName ?? "No sessions this week"}</p>
         </div>
         <div className="panel compact">
           <p className="eyebrow">Most sessions</p>
@@ -1880,7 +2294,7 @@ function FriendsView({
         </div>
         <div className="panel compact">
           <p className="eyebrow">Current score lead</p>
-          <div className="big-number">{scoreLeader?.currentScore || "-"}</div>
+          <div className="big-number">{scoreLeader?.scoreVisible === false ? "-" : scoreLeader?.currentScore || "-"}</div>
           <p className="muted">{scoreLeader?.displayName ?? "No score yet"}</p>
         </div>
       </div>
@@ -1904,15 +2318,19 @@ function FriendsView({
                   <small>streak</small>
                 </div>
                 <div>
+                  <strong>{friend.sessionsThisWeek}</strong>
+                  <small>week</small>
+                </div>
+                <div>
                   <strong>{friend.sessions}</strong>
                   <small>sessions</small>
                 </div>
                 <div>
-                  <strong>{friend.currentScore || "-"}</strong>
+                  <strong>{friend.scoreVisible === false ? "Private" : friend.currentScore || "-"}</strong>
                   <small>current</small>
                 </div>
                 <div>
-                  <strong>{friend.bestScore || "-"}</strong>
+                  <strong>{friend.scoreVisible === false ? "Private" : friend.bestScore || "-"}</strong>
                   <small>best</small>
                 </div>
               </div>
@@ -1922,7 +2340,7 @@ function FriendsView({
 
         <div className="panel">
           <p className="eyebrow">Add friend snapshot</p>
-          <h2>Track friends before cloud sync</h2>
+          <h2>{cloudActive ? "Add live friend" : "Track friends before cloud sync"}</h2>
           <p className="muted">
             {cloudActive
               ? "Add a friend's code to create a live two-way leaderboard relationship."
@@ -2058,6 +2476,71 @@ function AnalyticsView({
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      <div className="workspace two-column">
+        <div className="panel">
+          <p className="eyebrow">Weak topics</p>
+          <div className="topic-table">
+            {analytics.topicStats.slice(0, 8).map((topic) => (
+              <div className="topic-row" key={topic.topic}>
+                <strong>{topic.topic}</strong>
+                <span>{Math.round(topic.accuracy * 100)}%</span>
+                <div className="mini-track">
+                  <i style={{ width: `${Math.round(topic.accuracy * 100)}%` }} />
+                </div>
+                <small>{topic.correct}/{topic.total} correct · {topic.averageSeconds}s avg</small>
+              </div>
+            ))}
+            {analytics.topicStats.length === 0 && <p className="muted">Topic breakdown appears after practice.</p>}
+          </div>
+        </div>
+
+        <div className="panel">
+          <p className="eyebrow">Timing profile</p>
+          <div className="score-strip two">
+            <div>
+              <span>Slow but correct</span>
+              <strong>{analytics.slowCorrect}</strong>
+            </div>
+            <div>
+              <span>Fast but wrong</span>
+              <strong>{analytics.quickWrong}</strong>
+            </div>
+          </div>
+          <p className="muted">
+            Slow correct answers need efficiency work. Fast wrong answers usually need a slower first pass.
+          </p>
+          <div className="section-breakdown">
+            {analytics.sectionStats.map((section) => (
+              <div key={section.section} className="readiness-row">
+                <span>{SECTION_BY_ID[section.section].shortLabel}</span>
+                <div className="mini-track">
+                  <i style={{ width: `${Math.round(section.accuracy * 100)}%` }} />
+                </div>
+                <strong>{Math.round(section.accuracy * 100)}%</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel">
+        <p className="eyebrow">Mock exam reports</p>
+        <div className="mock-report-grid">
+          {analytics.mockReports.map((attempt) => (
+            <div className="mock-report" key={attempt.id}>
+              <strong>{attempt.estimatedTotalScore}</strong>
+              <span>{new Date(attempt.completedAt).toLocaleDateString()}</span>
+              <small>
+                {attempt.sectionScores
+                  .map((score) => `${SECTION_BY_ID[score.section].shortLabel} ${score.estimatedScore}`)
+                  .join(" · ")}
+              </small>
+            </div>
+          ))}
+          {analytics.mockReports.length === 0 && <p className="muted">Complete a mock exam to see a section report.</p>}
         </div>
       </div>
 
@@ -2492,23 +2975,89 @@ function buildAnalytics(attempts: Attempt[]) {
     ? Math.round(attempts.reduce((sum, attempt) => sum + attempt.estimatedTotalScore, 0) / attemptCount)
     : 0;
   const bestScore = attemptCount ? Math.max(...attempts.map((attempt) => attempt.estimatedTotalScore)) : 0;
-  const topicStats = new Map<string, { correct: number; total: number }>();
+  const today = new Date().toISOString().slice(0, 10);
+  const todayAttempts = attempts.filter((attempt) => attempt.completedAt.slice(0, 10) === today);
+  const weeklyAttempts = attempts.filter((attempt) => isAttemptThisWeek(attempt));
+  const topicStats = new Map<string, { correct: number; total: number; seconds: number }>();
+  const sectionStats = new Map<SectionId, { correct: number; total: number; seconds: number }>();
+  let slowCorrect = 0;
+  let quickWrong = 0;
 
   for (const attempt of attempts) {
     for (const response of attempt.responses) {
-      const current = topicStats.get(response.topic) ?? { correct: 0, total: 0 };
+      const current = topicStats.get(response.topic) ?? { correct: 0, total: 0, seconds: 0 };
       current.total += 1;
       current.correct += response.isCorrect ? 1 : 0;
+      current.seconds += response.timeSpentSeconds;
       topicStats.set(response.topic, current);
+
+      const section = sectionStats.get(response.section) ?? { correct: 0, total: 0, seconds: 0 };
+      section.total += 1;
+      section.correct += response.isCorrect ? 1 : 0;
+      section.seconds += response.timeSpentSeconds;
+      sectionStats.set(response.section, section);
+
+      if (response.isCorrect && response.timeSpentSeconds >= 140) {
+        slowCorrect += 1;
+      }
+      if (!response.isCorrect && response.timeSpentSeconds <= 55) {
+        quickWrong += 1;
+      }
     }
   }
 
-  const weakestTopic =
-    Array.from(topicStats.entries())
-      .filter(([, stat]) => stat.total >= 2)
-      .sort((a, b) => a[1].correct / a[1].total - b[1].correct / b[1].total)[0]?.[0] ?? "";
+  const topicRows = Array.from(topicStats.entries())
+    .map(([topic, stat]) => ({
+      topic,
+      correct: stat.correct,
+      total: stat.total,
+      accuracy: stat.total ? stat.correct / stat.total : 0,
+      averageSeconds: stat.total ? Math.round(stat.seconds / stat.total) : 0,
+    }))
+    .sort((a, b) => {
+      if (a.accuracy !== b.accuracy) return a.accuracy - b.accuracy;
+      return b.total - a.total;
+    });
 
-  return { attemptCount, averageScore, bestScore, weakestTopic };
+  const sectionRows = SECTIONS.map((section) => {
+    const stat = sectionStats.get(section.id) ?? { correct: 0, total: 0, seconds: 0 };
+    return {
+      section: section.id,
+      correct: stat.correct,
+      total: stat.total,
+      accuracy: stat.total ? stat.correct / stat.total : 0,
+      averageSeconds: stat.total ? Math.round(stat.seconds / stat.total) : 0,
+    };
+  });
+
+  const weakestTopic = topicRows.filter((row) => row.total >= 2)[0]?.topic ?? "";
+  const todayQuestions = todayAttempts.reduce((sum, attempt) => sum + attempt.totalQuestions, 0);
+  const todayMinutes = Math.round(
+    todayAttempts.reduce(
+      (sum, attempt) =>
+        sum + attempt.responses.reduce((inner, response) => inner + response.timeSpentSeconds, 0),
+      0,
+    ) / 60,
+  );
+  const weeklyQuestions = weeklyAttempts.reduce((sum, attempt) => sum + attempt.totalQuestions, 0);
+  const mockReports = attempts.filter((attempt) => attempt.mode === "mock").slice(0, 4);
+
+  return {
+    attemptCount,
+    averageScore,
+    bestScore,
+    weakestTopic,
+    todayQuestions,
+    todayMinutes,
+    weeklySessions: weeklyAttempts.length,
+    weeklyQuestions,
+    streakDays: computeStreakDays(attempts),
+    topicStats: topicRows,
+    sectionStats: sectionRows,
+    slowCorrect,
+    quickWrong,
+    mockReports,
+  };
 }
 
 function buildLeaderboard(
@@ -2517,8 +3066,10 @@ function buildLeaderboard(
   activeProfileId: string | null,
 ): FriendSnapshot[] {
   const activeAccount = accounts.find((account) => account.profile.id === activeProfileId);
-  const localProfiles = accounts.map((account) => accountToFriendSnapshot(account, attempts));
-  const manualFriends = activeAccount?.friends ?? [];
+  const localProfiles = accounts.map((account) =>
+    accountToFriendSnapshot(normalizeAccount(account), attempts, activeProfileId ?? undefined),
+  );
+  const manualFriends = (activeAccount?.friends ?? []).map(normalizeFriendSnapshot);
 
   return [...localProfiles, ...manualFriends].sort((a, b) => {
     if (b.streakDays !== a.streakDays) {

@@ -1,14 +1,15 @@
-import { createCloudAccount, loginCloudAccount } from "@/lib/server-cloud";
+import { createCloudAccount, loginCloudAccount, resetCloudPassword } from "@/lib/server-cloud";
 import { isCloudStoreConfigured } from "@/lib/server-kv";
 import type { CloudAuthResponse } from "@/lib/cloud-types";
 
 export const runtime = "nodejs";
 
 type AuthPayload = {
-  mode?: "signup" | "login";
+  mode?: "signup" | "login" | "reset";
   displayName?: string;
   email?: string;
   password?: string;
+  recoveryCode?: string;
   targetScore?: number;
 };
 
@@ -38,7 +39,9 @@ export async function POST(request: Request) {
             password: body.password,
             targetScore: Number(body.targetScore) || 655,
           })
-        : await loginCloudAccount(body.email, body.password);
+        : body.mode === "reset"
+          ? await resetCloudPassword(body.email, body.recoveryCode || "", body.password)
+          : await loginCloudAccount(body.email, body.password);
 
     return Response.json({ ok: true, ...result } satisfies CloudAuthResponse);
   } catch (error) {

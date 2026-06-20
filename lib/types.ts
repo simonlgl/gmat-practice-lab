@@ -114,9 +114,12 @@ export type FriendSnapshot = {
   friendCode: string;
   avatarColor: string;
   sessions: number;
+  sessionsThisWeek: number;
+  questionsThisWeek: number;
   streakDays: number;
   bestScore: number;
   currentScore: number;
+  scoreVisible: boolean;
   lastActiveAt: string;
 };
 
@@ -127,6 +130,11 @@ export type UserProfile = {
   friendCode: string;
   avatarColor: string;
   targetScore: number;
+  dailyQuestionGoal?: number;
+  weeklySessionGoal?: number;
+  showScoreToFriends?: boolean;
+  remindersEnabled?: boolean;
+  reminderHour?: number;
   createdAt: string;
   lastLoginAt: string;
 };
@@ -135,11 +143,13 @@ export type AccountRecord = {
   profile: UserProfile;
   passwordHash: string;
   salt: string;
+  recoveryHash?: string;
+  recoverySalt?: string;
   friends: FriendSnapshot[];
 };
 
 export type AppPersistedState = {
-  version: 2;
+  version: 3;
   questions: Question[];
   attempts: Attempt[];
   ability: AbilityMap;

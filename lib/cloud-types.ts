@@ -7,6 +7,7 @@ export type CloudAuthResponse =
       profile: UserProfile;
       friends: FriendSnapshot[];
       ability?: AbilityMap;
+      recoveryCode?: string;
     }
   | {
       ok: false;
@@ -36,6 +37,17 @@ export type CloudSnapshotResponse =
       profile: UserProfile;
       friends: FriendSnapshot[];
       ability?: AbilityMap;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+export type CloudProfileResponse =
+  | {
+      ok: true;
+      profile: UserProfile;
+      friends: FriendSnapshot[];
     }
   | {
       ok: false;

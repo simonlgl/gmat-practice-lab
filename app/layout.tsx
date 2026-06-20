@@ -5,9 +5,11 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "GMAT Practice Lab",
   description: "Private adaptive GMAT-style practice environment with analytics.",
+  manifest: "/manifest.webmanifest",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
+    apple: "/favicon.svg",
   },
 };
 

@@ -7,6 +7,8 @@ type CloudAccount = {
   profile: UserProfile;
   passwordHash: string;
   salt: string;
+  recoveryHash?: string;
+  recoverySalt?: string;
 };
 
 type CloudSession = {
@@ -15,15 +17,31 @@ type CloudSession = {
 };
 
 const sessionTtlSeconds = 60 * 60 * 24 * 30;
+const recoveryAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function hashPassword(password: string, salt = randomBytes(16).toString("base64")) {
   const hash = pbkdf2Sync(password, salt, 150000, 32, "sha256").toString("base64");
   return { salt, hash };
 }
 
+function generateRecoveryCode() {
+  const bytes = randomBytes(12);
+  const raw = Array.from(bytes, (byte) => recoveryAlphabet[byte % recoveryAlphabet.length]).join("");
+  return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`;
+}
+
 function verifyPassword(account: CloudAccount, password: string) {
   const candidate = hashPassword(password, account.salt).hash;
   return timingSafeEqual(Buffer.from(candidate), Buffer.from(account.passwordHash));
+}
+
+function verifyRecoveryCode(account: CloudAccount, recoveryCode: string) {
+  if (!account.recoveryHash || !account.recoverySalt) {
+    return false;
+  }
+
+  const candidate = hashPassword(recoveryCode.trim().toUpperCase(), account.recoverySalt).hash;
+  return timingSafeEqual(Buffer.from(candidate), Buffer.from(account.recoveryHash));
 }
 
 function emailKey(email: string) {
@@ -80,18 +98,31 @@ export async function createCloudAccount({
     friendCode: id.replace("profile-", "").slice(0, 8).toUpperCase(),
     avatarColor: ["#1f6f67", "#bd7b22", "#b44b3f", "#24754f", "#5f5b9c"][Math.floor(Math.random() * 5)],
     targetScore,
+    dailyQuestionGoal: 20,
+    weeklySessionGoal: 5,
+    showScoreToFriends: true,
+    remindersEnabled: false,
+    reminderHour: 18,
     createdAt: now,
     lastLoginAt: now,
   };
   const { salt, hash } = hashPassword(password);
-  const account: CloudAccount = { profile, passwordHash: hash, salt };
+  const recoveryCode = generateRecoveryCode();
+  const recovery = hashPassword(recoveryCode);
+  const account: CloudAccount = {
+    profile,
+    passwordHash: hash,
+    salt,
+    recoveryHash: recovery.hash,
+    recoverySalt: recovery.salt,
+  };
 
   await kvSetJson(profileKey(id), account);
   await kvCommand<"OK">("SET", emailKey(normalizedEmail), id);
   await kvCommand<"OK">("SET", friendCodeKey(profile.friendCode), id);
   await kvSetJson(abilityKey(id), DEFAULT_ABILITY);
 
-  return startCloudSession(account);
+  return { ...(await startCloudSession(account)), recoveryCode };
 }
 
 export async function loginCloudAccount(email: string, password: string) {
@@ -108,6 +139,65 @@ export async function loginCloudAccount(email: string, password: string) {
   account.profile.lastLoginAt = new Date().toISOString();
   await kvSetJson(profileKey(profileId), account);
   return startCloudSession(account);
+}
+
+export async function resetCloudPassword(email: string, recoveryCode: string, password: string) {
+  const profileId = await kvCommand<string | null>("GET", emailKey(email.trim().toLowerCase()));
+  if (!profileId) {
+    throw new Error("Email or recovery code is incorrect.");
+  }
+
+  const account = await kvGetJson<CloudAccount>(profileKey(profileId));
+  if (!account || !verifyRecoveryCode(account, recoveryCode)) {
+    throw new Error("Email or recovery code is incorrect.");
+  }
+
+  const nextPassword = hashPassword(password);
+  const nextRecoveryCode = generateRecoveryCode();
+  const nextRecovery = hashPassword(nextRecoveryCode);
+  account.passwordHash = nextPassword.hash;
+  account.salt = nextPassword.salt;
+  account.recoveryHash = nextRecovery.hash;
+  account.recoverySalt = nextRecovery.salt;
+  account.profile.lastLoginAt = new Date().toISOString();
+  await kvSetJson(profileKey(profileId), account);
+
+  return { ...(await startCloudSession(account)), recoveryCode: nextRecoveryCode };
+}
+
+export async function updateCloudProfile(
+  token: string,
+  updates: Partial<
+    Pick<
+      UserProfile,
+      | "displayName"
+      | "targetScore"
+      | "dailyQuestionGoal"
+      | "weeklySessionGoal"
+      | "showScoreToFriends"
+      | "remindersEnabled"
+      | "reminderHour"
+    >
+  >,
+) {
+  const account = await getAccountForToken(token);
+  const nextProfile: UserProfile = {
+    ...account.profile,
+    displayName: updates.displayName?.trim() || account.profile.displayName,
+    targetScore: Number(updates.targetScore) || account.profile.targetScore,
+    dailyQuestionGoal: Math.max(1, Number(updates.dailyQuestionGoal) || 20),
+    weeklySessionGoal: Math.max(1, Number(updates.weeklySessionGoal) || 5),
+    showScoreToFriends: updates.showScoreToFriends !== false,
+    remindersEnabled: Boolean(updates.remindersEnabled),
+    reminderHour: Math.min(Math.max(Number(updates.reminderHour) || 18, 0), 23),
+  };
+
+  const nextAccount = { ...account, profile: nextProfile };
+  await kvSetJson(profileKey(nextProfile.id), nextAccount);
+  return {
+    profile: nextProfile,
+    friends: await getFriendLeaderboard(nextProfile.id),
+  };
 }
 
 export async function getAccountForToken(token: string) {
@@ -162,17 +252,21 @@ export async function saveCloudProgress(profileId: string, attempt: Attempt, abi
 export async function getFriendLeaderboard(profileId: string): Promise<FriendSnapshot[]> {
   const friendIds = await kvCommand<string[]>("SMEMBERS", friendsKey(profileId));
   const ids = [profileId, ...(friendIds ?? [])];
-  const rows = await Promise.all(ids.map((id) => getFriendSnapshot(id)));
+  const rows = await Promise.all(ids.map((id) => getFriendSnapshot(id, profileId)));
   return rows
     .filter((row): row is FriendSnapshot => Boolean(row))
     .sort((a, b) => {
       if (b.streakDays !== a.streakDays) return b.streakDays - a.streakDays;
+      if (b.sessionsThisWeek !== a.sessionsThisWeek) return b.sessionsThisWeek - a.sessionsThisWeek;
       if (b.sessions !== a.sessions) return b.sessions - a.sessions;
       return b.currentScore - a.currentScore;
     });
 }
 
-async function getFriendSnapshot(profileId: string): Promise<FriendSnapshot | null> {
+async function getFriendSnapshot(
+  profileId: string,
+  viewerProfileId: string,
+): Promise<FriendSnapshot | null> {
   const account = await kvGetJson<CloudAccount>(profileKey(profileId));
   if (!account) {
     return null;
@@ -185,8 +279,11 @@ async function getFriendSnapshot(profileId: string): Promise<FriendSnapshot | nu
       profile: account.profile,
       passwordHash: account.passwordHash,
       salt: account.salt,
+      recoveryHash: account.recoveryHash,
+      recoverySalt: account.recoverySalt,
       friends: [],
     },
     attempts,
+    viewerProfileId,
   );
 }

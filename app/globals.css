@@ -127,6 +127,13 @@ a:hover {
   padding: 10px 12px;
 }
 
+.strong-notice {
+  border-color: var(--amber);
+  background: #fff5d8;
+  color: #6d470f;
+  font-weight: 800;
+}
+
 .auth-shell {
   display: grid;
   min-height: 100vh;
@@ -156,6 +163,10 @@ a:hover {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 8px;
+}
+
+.auth-switch.triple {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .auth-switch button,
@@ -276,11 +287,16 @@ a:hover {
 }
 
 .dashboard-grid,
+.goal-grid,
 .library-grid,
 .section-score-grid {
   display: grid;
   grid-template-columns: 1.4fr 1fr 0.8fr;
   gap: 18px;
+}
+
+.goal-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .section-score-grid {
@@ -455,6 +471,10 @@ a:hover {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.score-strip.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .score-strip div {
   display: grid;
   gap: 6px;
@@ -478,7 +498,7 @@ a:hover {
 
 .friend-row {
   display: grid;
-  grid-template-columns: 34px 42px minmax(150px, 1fr) repeat(4, minmax(70px, 0.7fr));
+  grid-template-columns: 34px 42px minmax(150px, 1fr) repeat(5, minmax(70px, 0.7fr));
   align-items: center;
   gap: 10px;
   border: 1px solid var(--line);
@@ -512,6 +532,30 @@ a:hover {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.toggle-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--teal);
+}
+
+.fieldless {
+  align-self: end;
+  min-height: 42px;
+}
+
+.compact-field {
+  margin-top: 0;
 }
 
 .order-list,
@@ -650,6 +694,57 @@ a:hover {
 .trend-bar span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.goal-track {
+  margin: 14px 0 8px;
+}
+
+.topic-table,
+.section-breakdown,
+.mock-report-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.topic-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) 54px minmax(120px, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 10px;
+}
+
+.topic-row small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+
+.mock-report-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.mock-report {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+  padding: 12px;
+}
+
+.mock-report strong {
+  color: var(--teal-dark);
+  font-size: 28px;
+}
+
+.mock-report span,
+.mock-report small {
+  color: var(--muted);
 }
 
 .attempt-row {
@@ -1062,9 +1157,11 @@ a:hover {
 
   .tabs,
   .dashboard-grid,
+  .goal-grid,
   .two-column,
   .library-grid,
   .section-score-grid,
+  .mock-report-grid,
   .score-strip,
   .friend-row,
   .exam-window {
@@ -1092,6 +1189,7 @@ a:hover {
   }
 
   .attempt-row,
+  .topic-row,
   .review-log-row {
     grid-template-columns: 1fr;
   }
@@ -1116,7 +1214,8 @@ a:hover {
   }
 
   .profile-strip,
-  .mini-form-grid {
+  .mini-form-grid,
+  .auth-switch.triple {
     grid-template-columns: 1fr;
   }
 
