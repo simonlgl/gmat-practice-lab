@@ -1729,10 +1729,13 @@ function ExamSurface({
   toast: string;
   aiBusy: boolean;
 }) {
+  const examShellClass =
+    session.mode === "mock" ? "exam-shell mock-exam-shell" : "exam-shell practice-exam-shell";
+
   if (session.status === "break") {
     const nextSection = session.sectionOrder[session.currentSectionIndex + 1];
     return (
-      <main className="exam-shell">
+      <main className={examShellClass}>
         <div className="exam-window break-window">
           <p className="eyebrow">Optional break</p>
           <h1>{session.breakRemainingSeconds === null ? "Section complete" : "Break in progress"}</h1>
@@ -1763,7 +1766,7 @@ function ExamSurface({
 
   if (session.status === "review") {
     return (
-      <main className="exam-shell">
+      <main className={examShellClass}>
         <ExamHeader
           section={activeSection}
           session={session}
@@ -1820,7 +1823,7 @@ function ExamSurface({
   const isBookmarked = Boolean(session.bookmarkedIds[activeQuestion.id]);
 
   return (
-    <main className="exam-shell">
+    <main className={examShellClass}>
       <ExamHeader
         section={activeSection}
         session={session}

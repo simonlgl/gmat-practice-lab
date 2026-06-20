@@ -1,21 +1,24 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #eef1ec;
-  --surface: #fbfbf7;
+  --bg: #f7f8fb;
+  --surface: #ffffff;
   --surface-strong: #ffffff;
-  --ink: #1c211e;
-  --muted: #636a66;
-  --line: #cdd4cd;
-  --line-strong: #aab5ad;
-  --teal: #1f6f67;
-  --teal-dark: #174f4a;
-  --amber: #bd7b22;
-  --coral: #b44b3f;
-  --green: #24754f;
-  --paper: #fffdf7;
-  --shadow: 0 18px 44px rgba(42, 45, 40, 0.12);
-  --radius: 8px;
+  --ink: #3c3c3c;
+  --muted: #777777;
+  --line: #e5e5e5;
+  --line-strong: #cfcfcf;
+  --teal: #58cc02;
+  --teal-dark: #46a302;
+  --amber: #ffc800;
+  --coral: #ff4b4b;
+  --green: #58cc02;
+  --blue: #1cb0f6;
+  --purple: #ce82ff;
+  --paper: #f7f7f7;
+  --shadow: 0 4px 0 #e5e5e5;
+  --button-shadow: 0 5px 0 #46a302;
+  --radius: 18px;
 }
 
 * {
@@ -29,12 +32,10 @@ html {
 body {
   min-width: 320px;
   margin: 0;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(238, 241, 236, 0.94)),
-    var(--bg);
+  background: var(--bg);
   color: var(--ink);
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    ui-rounded, "Nunito", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 button,
@@ -66,6 +67,9 @@ a:hover {
   min-height: 100vh;
   margin: 0 auto;
   padding: 22px;
+  background:
+    linear-gradient(90deg, rgba(88, 204, 2, 0.06) 0 1px, transparent 1px 88px),
+    linear-gradient(180deg, rgba(28, 176, 246, 0.06) 0 1px, transparent 1px 88px);
 }
 
 .topbar,
@@ -77,7 +81,14 @@ a:hover {
 }
 
 .topbar {
-  padding: 18px 0 14px;
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  margin: -22px -22px 18px;
+  border-bottom: 2px solid var(--line);
+  background: rgba(247, 248, 251, 0.94);
+  padding: 16px 22px;
+  backdrop-filter: blur(12px);
 }
 
 .topbar h1,
@@ -90,15 +101,16 @@ a:hover {
 }
 
 .topbar h1 {
-  font-size: 28px;
+  color: #3c3c3c;
+  font-size: 30px;
   line-height: 1.15;
 }
 
 .eyebrow {
   margin: 0 0 8px;
-  color: var(--teal-dark);
+  color: var(--blue);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 900;
   letter-spacing: 0;
   text-transform: uppercase;
 }
@@ -111,9 +123,9 @@ a:hover {
 
 .status-pill,
 .notice {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.72);
+  border: 2px solid var(--line);
+  border-radius: 14px;
+  background: #ffffff;
   color: var(--muted);
 }
 
@@ -129,9 +141,9 @@ a:hover {
 
 .strong-notice {
   border-color: var(--amber);
-  background: #fff5d8;
-  color: #6d470f;
-  font-weight: 800;
+  background: #fff7cf;
+  color: #6d5700;
+  font-weight: 900;
 }
 
 .auth-shell {
@@ -144,18 +156,17 @@ a:hover {
   display: grid;
   width: min(560px, 100%);
   gap: 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background:
-    linear-gradient(135deg, rgba(31, 111, 103, 0.14), rgba(189, 123, 34, 0.1)),
-    var(--surface-strong);
+  border: 2px solid var(--line);
+  border-radius: 24px;
+  background: var(--surface-strong);
   box-shadow: var(--shadow);
-  padding: 24px;
+  padding: 28px;
 }
 
 .auth-card h1 {
   margin: 0;
-  font-size: 32px;
+  color: #3c3c3c;
+  font-size: 36px;
   line-height: 1.1;
 }
 
@@ -171,16 +182,17 @@ a:hover {
 
 .auth-switch button,
 .known-accounts button {
-  min-height: 42px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  min-height: 46px;
+  border: 2px solid var(--line);
+  border-radius: 15px;
   background: var(--surface-strong);
-  font-weight: 800;
+  color: #4b4b4b;
+  font-weight: 900;
 }
 
 .auth-switch button.active {
   border-color: var(--teal);
-  background: #e1f0ed;
+  background: #e8ffd9;
   color: var(--teal-dark);
 }
 
@@ -210,9 +222,10 @@ a:hover {
   align-items: center;
   gap: 10px;
   max-width: 520px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.72);
+  border: 2px solid var(--line);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: var(--shadow);
   padding: 8px;
 }
 
@@ -224,10 +237,11 @@ a:hover {
 
 .avatar {
   display: inline-grid;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   place-items: center;
-  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.8);
+  border-radius: 14px;
   color: #fff;
   font-weight: 900;
 }
@@ -235,8 +249,8 @@ a:hover {
 .tabs {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 8px;
-  margin: 10px 0 18px;
+  gap: 10px;
+  margin: 10px 0 22px;
 }
 
 .tab,
@@ -246,11 +260,11 @@ a:hover {
 .order-row button,
 .calculator button {
   min-height: 40px;
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
+  border-radius: 16px;
+  border: 2px solid var(--line);
   background: var(--surface-strong);
-  color: var(--ink);
-  font-weight: 800;
+  color: #4b4b4b;
+  font-weight: 900;
 }
 
 .tab {
@@ -259,7 +273,8 @@ a:hover {
   justify-content: center;
   gap: 8px;
   min-width: 0;
-  padding: 10px;
+  box-shadow: 0 3px 0 #e5e5e5;
+  padding: 11px 10px;
   white-space: nowrap;
 }
 
@@ -273,7 +288,8 @@ a:hover {
 
 .tab.active {
   border-color: var(--teal);
-  background: #e1f0ed;
+  background: #e8ffd9;
+  box-shadow: 0 3px 0 #a5ed7b;
   color: var(--teal-dark);
 }
 
@@ -304,19 +320,21 @@ a:hover {
 }
 
 .panel {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.82);
+  border: 2px solid var(--line);
+  border-radius: 20px;
+  background: #ffffff;
   box-shadow: var(--shadow);
-  padding: 20px;
+  padding: 22px;
 }
 
 .panel.compact {
-  box-shadow: none;
+  box-shadow: var(--shadow);
 }
 
 .panel h2 {
-  font-size: 21px;
+  color: #3c3c3c;
+  font-size: 22px;
+  font-weight: 900;
   line-height: 1.25;
 }
 
@@ -324,14 +342,15 @@ a:hover {
   min-height: 210px;
   display: grid;
   align-content: center;
-  background:
-    linear-gradient(135deg, rgba(31, 111, 103, 0.16), rgba(189, 123, 34, 0.12)),
-    var(--surface-strong);
+  border-color: #a5ed7b;
+  background: linear-gradient(135deg, #f0ffe8, #e8f8ff 72%, #fff8d9);
 }
 
 .exam-console h2 {
   max-width: 700px;
-  font-size: 34px;
+  color: #3c3c3c;
+  font-size: 38px;
+  font-weight: 900;
   line-height: 1.1;
 }
 
@@ -351,25 +370,35 @@ a:hover {
   justify-content: center;
   gap: 8px;
   min-width: 150px;
-  padding: 10px 14px;
+  padding: 11px 16px;
+  text-transform: uppercase;
 }
 
 .primary-action {
-  border-color: var(--teal-dark);
+  border-color: var(--teal);
   background: var(--teal);
   color: #fff;
+  box-shadow: var(--button-shadow);
 }
 
 .primary-action:hover {
-  background: var(--teal-dark);
+  background: #61df02;
+  text-decoration: none;
+  transform: translateY(-1px);
+}
+
+.primary-action:active {
+  box-shadow: 0 2px 0 #46a302;
+  transform: translateY(3px);
 }
 
 .secondary-action:hover,
 .tab:hover,
 .order-row button:hover,
 .calculator button:hover {
-  border-color: var(--line-strong);
-  background: #f4f5ef;
+  border-color: var(--blue);
+  background: #e8f7ff;
+  color: #1276a8;
 }
 
 .secondary-action.small {
@@ -388,11 +417,12 @@ a:hover {
 .choice-card {
   display: grid;
   gap: 6px;
-  min-height: 92px;
+  min-height: 106px;
   padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border: 2px solid var(--line);
+  border-radius: 18px;
   background: var(--surface);
+  box-shadow: 0 4px 0 #e5e5e5;
   text-align: left;
 }
 
@@ -403,7 +433,8 @@ a:hover {
 
 .choice-card.selected {
   border-color: var(--teal);
-  background: #e3f1ee;
+  background: #e8ffd9;
+  box-shadow: 0 4px 0 #a5ed7b;
 }
 
 .readiness-list {
@@ -424,25 +455,26 @@ a:hover {
 }
 
 .mini-track {
-  height: 10px;
+  height: 14px;
   overflow: hidden;
   border-radius: 999px;
-  background: #d9ded8;
+  background: #e5e5e5;
 }
 
 .mini-track i {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--coral), var(--amber), var(--teal));
+  background: linear-gradient(90deg, var(--blue), var(--teal));
 }
 
 .big-number {
   margin-top: 6px;
-  color: var(--teal-dark);
+  color: var(--teal);
   font-size: 42px;
   font-weight: 900;
   line-height: 1;
+  text-shadow: 0 2px 0 #d7f7c7;
 }
 
 .source-counts,
@@ -455,9 +487,10 @@ a:hover {
 
 .source-counts span,
 .score-strip div {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--paper);
+  border: 2px solid var(--line);
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 3px 0 #e5e5e5;
 }
 
 .source-counts span {
@@ -487,7 +520,9 @@ a:hover {
 }
 
 .score-strip strong {
-  font-size: 22px;
+  color: #3c3c3c;
+  font-size: 24px;
+  font-weight: 900;
 }
 
 .friend-board {
@@ -501,10 +536,11 @@ a:hover {
   grid-template-columns: 34px 42px minmax(150px, 1fr) repeat(5, minmax(70px, 0.7fr));
   align-items: center;
   gap: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
-  padding: 10px;
+  border: 2px solid var(--line);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 3px 0 #e5e5e5;
+  padding: 12px;
 }
 
 .friend-row small {
@@ -518,9 +554,10 @@ a:hover {
   width: 28px;
   height: 28px;
   place-items: center;
-  border-radius: 50%;
-  background: var(--ink);
+  border-radius: 10px;
+  background: var(--amber);
   color: #fff;
+  box-shadow: 0 3px 0 #d19c00;
   font-weight: 900;
 }
 
@@ -572,9 +609,10 @@ a:hover {
   display: grid;
   align-items: center;
   gap: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
+  border: 2px solid var(--line);
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 3px 0 #e5e5e5;
 }
 
 .order-row {
@@ -587,10 +625,10 @@ a:hover {
   width: 28px;
   height: 28px;
   place-items: center;
-  border-radius: 50%;
-  background: var(--ink);
+  border-radius: 10px;
+  background: var(--blue);
   color: #fff;
-  font-weight: 800;
+  font-weight: 900;
 }
 
 .order-row div {
@@ -622,9 +660,10 @@ a:hover {
 }
 
 .resource-links a {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--paper);
+  border: 2px solid var(--line);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 3px 0 #e5e5e5;
   padding: 9px 10px;
 }
 
@@ -637,12 +676,20 @@ a:hover {
 
 .field input,
 .field select {
-  min-height: 42px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  min-height: 46px;
+  border: 2px solid var(--line);
+  border-radius: 14px;
   background: var(--surface-strong);
   padding: 9px 10px;
   color: var(--ink);
+  font-weight: 800;
+}
+
+.field input:focus,
+.field select:focus {
+  border-color: var(--blue);
+  outline: 0;
+  box-shadow: 0 0 0 4px rgba(28, 176, 246, 0.14);
 }
 
 .draft-preview {
@@ -687,8 +734,9 @@ a:hover {
 .trend-bar i {
   display: block;
   min-height: 8px;
-  border-radius: 6px 6px 0 0;
-  background: linear-gradient(180deg, var(--teal), var(--amber));
+  border-radius: 12px 12px 4px 4px;
+  background: linear-gradient(180deg, var(--teal), var(--blue));
+  box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.08);
 }
 
 .trend-bar span {
@@ -713,9 +761,10 @@ a:hover {
   grid-template-columns: minmax(140px, 1fr) 54px minmax(120px, 1fr);
   align-items: center;
   gap: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
+  border: 2px solid var(--line);
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 3px 0 #e5e5e5;
   padding: 10px;
 }
 
@@ -731,15 +780,17 @@ a:hover {
 .mock-report {
   display: grid;
   gap: 6px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--paper);
+  border: 2px solid var(--line);
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 3px 0 #e5e5e5;
   padding: 12px;
 }
 
 .mock-report strong {
-  color: var(--teal-dark);
+  color: var(--teal);
   font-size: 28px;
+  text-shadow: 0 2px 0 #d7f7c7;
 }
 
 .mock-report span,
@@ -754,7 +805,85 @@ a:hover {
 
 .exam-shell {
   min-height: 100vh;
+  background: #eafbea;
+  color: var(--ink);
+}
+
+.practice-exam-shell {
+  --surface: #ffffff;
+  --surface-strong: #ffffff;
+  --line: #d7eecf;
+  --line-strong: #a5ed7b;
+  --paper: #f3ffe9;
+}
+
+.practice-exam-shell .exam-header {
+  border-bottom: 2px solid #d7eecf;
+  background: #ffffff;
+}
+
+.practice-exam-shell .exam-header-center {
+  border: 2px solid #d7eecf;
+  border-radius: 16px;
+  box-shadow: 0 3px 0 #e5e5e5;
+}
+
+.mock-exam-shell {
+  --surface: #fbfbf7;
+  --surface-strong: #ffffff;
+  --ink: #1c211e;
+  --muted: #636a66;
+  --line: #cdd4cd;
+  --line-strong: #aab5ad;
+  --teal: #1f6f67;
+  --teal-dark: #174f4a;
+  --amber: #bd7b22;
+  --coral: #b44b3f;
+  --green: #24754f;
+  --paper: #fffdf7;
+  --shadow: 0 18px 44px rgba(42, 45, 40, 0.12);
+  --radius: 8px;
   background: #dde2dd;
+  color: var(--ink);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.mock-exam-shell .primary-action,
+.mock-exam-shell .secondary-action,
+.mock-exam-shell .icon-button,
+.mock-exam-shell .order-row button,
+.mock-exam-shell .calculator button {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: none;
+  min-height: 40px;
+  text-transform: none;
+}
+
+.mock-exam-shell .primary-action {
+  border-color: var(--teal-dark);
+  background: var(--teal);
+  color: #fff;
+}
+
+.mock-exam-shell .secondary-action,
+.mock-exam-shell .icon-button,
+.mock-exam-shell .calculator button {
+  background: #fff;
+  color: var(--ink);
+}
+
+.mock-exam-shell .primary-action:hover {
+  background: var(--teal-dark);
+  transform: none;
+}
+
+.mock-exam-shell .secondary-action:hover,
+.mock-exam-shell .icon-button:hover,
+.mock-exam-shell .calculator button:hover {
+  border-color: var(--line-strong);
+  background: #f4f5ef;
   color: var(--ink);
 }
 
@@ -837,6 +966,15 @@ a:hover {
   border: 1px solid #aeb7b1;
   border-radius: var(--radius);
   background: #fff;
+}
+
+.practice-exam-shell .exam-side,
+.practice-exam-shell .question-panel,
+.practice-exam-shell .review-board,
+.practice-exam-shell .break-window {
+  border: 2px solid #d7eecf;
+  border-radius: 20px;
+  box-shadow: 0 4px 0 #c7efb6;
 }
 
 .exam-side {
